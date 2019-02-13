@@ -2,7 +2,6 @@ SERVER_COUNT = 1
 CONSUL_VER = "1.4.2"
 CT_VER = "0.19.5"
 LOG_LEVEL = "debug" #The available log levels are "trace", "debug", "info", "warn", and "err". if empty - default is "info"
-DC_COUNT = 2
 DOMAIN = "denislav"
 
 
@@ -35,6 +34,7 @@ Vagrant.configure("2") do |config|
       nginx.vm.provision :shell, path: "scripts/install_consul.sh", env: {"CONSUL_VER" => CONSUL_VER}
       nginx.vm.provision :shell, path: "scripts/start_consul.sh", env: {"SERVER_COUNT" => SERVER_COUNT,"LOG_LEVEL" => LOG_LEVEL,"DOMAIN" => DOMAIN,"DCS" => "#{dcname}","DC" => "#{dc}"}
       nginx.vm.provision :shell, path: "scripts/consul-template.sh", env: {"CT_VER" => CT_VER}
+      nginx.vm.provision :shell, path: "scripts/conf-dnsmasq.sh"
       nginx.vm.provision :shell, path: "scripts/check_nginx.sh"
       nginx.vm.network "private_network", ip: "10.#{dc}0.66.11"
       nginx.vm.network "forwarded_port", guest: 80, host: 8080 + dc

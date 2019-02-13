@@ -1,0 +1,12 @@
+curl \
+    --request POST \
+    --data \
+'{
+  "Name": "nginx",
+  "Service": {
+    "Service": "web",
+    "Failover": {
+      "NearestN": 2
+    }
+  }
+}' http://127.0.0.1:8500/v1/query
