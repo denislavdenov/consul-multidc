@@ -78,6 +78,7 @@ if [[ "${var2}" =~ "consul-server" ]]; then
         "client_addr": "0.0.0.0",
         "bootstrap_expect": ${SERVER_COUNT},
         "retry_join": ["10.10.56.11"],
+        "retry_join_wan": ["10.20.56.11"],
         "log_level": "${LOG_LEVEL}",
         "data_dir": "/tmp/consul",
         "enable_script_checks": true,
