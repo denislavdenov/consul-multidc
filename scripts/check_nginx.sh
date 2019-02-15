@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-
+TLS=${TLS}
 # Check for nginx
 which nginx || {
 apt-get update -y
@@ -55,8 +55,17 @@ cat << EOF > /etc/consul.d/web.json
 }
 EOF
 
+if [ ${TLS} = true ]; then
+    consul-template -consul-ssl-key=/etc/tls/consul-agent-key.pem -consul-ssl-cert=/etc/tls/consul-agent.pem -consul-addr "https://127.0.0.1:8501" -consul-ssl-ca-path=/etc/tls/consul-agent-ca.pem -config /vagrant/config.hcl &
+else
+    consul-template -config /vagrant/config.hcl &
 
-consul-template -config /vagrant/config.hcl &
+fi
+
 
 sleep 1
-consul reload
+if [ ${TLS} = true ]; then
+    consul reload -ca-file=/etc/tls/consul-agent-ca.pem -client-cert=/etc/tls/consul-agent.pem -client-key=/etc/tls/consul-agent-key.pem -http-addr="https://127.0.0.1:8501"
+else
+    consul reload
+fi
