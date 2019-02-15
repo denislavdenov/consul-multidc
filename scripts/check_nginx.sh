@@ -62,7 +62,6 @@ else
 
 fi
 
-consul-template -consul-ssl-key=/etc/tls/consul-agent-key.pem -consul-ssl-cert=/etc/tls/consul-agent.pem -consul-addr "https://127.0.0.1:8501" -consul-ssl-ca-path=/etc/tls/consul-agent-ca.pem -config /vagrant/config.hcl &
 
 sleep 1
 if [ ${TLS} = true ]; then

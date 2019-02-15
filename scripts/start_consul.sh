@@ -4,19 +4,19 @@ sudo systemctl stop consul
 sleep 5
 sudo systemctl status consul
 DOMAIN=${DOMAIN}
+SERVER_COUNT=${SERVER_COUNT}
 DCNAME=${DCS}
 DC=${DC}
 TLS=${TLS}
+SOFIA_SERVERS="[\"10.10.56.11\"]"
+BTG_SERVERS="[\"10.20.56.11\"]"
+JOIN_SERVER="[\"10.${DC}0.56.11\"]"
 echo ${TLS}
 var2=$(hostname)
 mkdir -p /vagrant/logs
 mkdir -p /etc/consul.d
 
-if [ ${TLS} = true ]; then
-    mkdir -p /etc/tls
-    sshpass -p 'vagrant' scp -o StrictHostKeyChecking=no vagrant@10.10.46.11:"/etc/vault.d/vault.crt" /etc/tls/
-     # Unsealing vault
-
+unseal_vault () {
     curl \
         --request PUT \
         --cacert /etc/tls/vault.crt \
@@ -34,57 +34,59 @@ if [ ${TLS} = true ]; then
         --cacert /etc/tls/vault.crt \
         --data "{ \"key\": \"`cat /vagrant/keys.txt | grep \"Unseal Key 3:\" | cut -c15-`\"}" \
         https://10.10.46.11:8200/v1/sys/unseal
-fi
-
-# Starting consul
-killall consul
-
-LOG_LEVEL=${LOG_LEVEL}
-if [ -z "${LOG_LEVEL}" ]; then
-    LOG_LEVEL="info"
-fi
-
-if [ -d /vagrant ]; then
-  mkdir /vagrant/logs
-  LOG="/vagrant/logs/${var2}.log"
-else
-  LOG="vault.log"
-fi
-
-IP=$(hostname -I | cut -f2 -d' ')
-
-sudo useradd --system --home /etc/consul.d --shell /bin/false consul
-sudo chown --recursive consul:consul /etc/consul.d
-sudo chmod -R 755 /etc/consul.d/
-sudo mkdir --parents /tmp/consul
-sudo chown --recursive consul:consul /tmp/consul
-mkdir -p /tmp/consul_logs/
-sudo chown --recursive consul:consul /tmp/consul_logs/
-
-cat << EOF > /etc/systemd/system/consul.service
-[Unit]
-Description="HashiCorp Consul - A service mesh solution"
-Documentation=https://www.consul.io/
-Requires=network-online.target
-After=network-online.target
-
-[Service]
-User=consul
-Group=consul
-ExecStart=/usr/local/bin/consul agent -config-dir=/etc/consul.d/
-ExecReload=/usr/local/bin/consul reload
-KillMode=process
-Restart=on-failure
-LimitNOFILE=65536
+}
 
 
-[Install]
-WantedBy=multi-user.target
+init_consul () {
+    killall consul
+
+    LOG_LEVEL=$1
+    if [ -z "$1" ]; then
+        LOG_LEVEL="info"
+    fi
+
+    if [ -d /vagrant ]; then
+    mkdir /vagrant/logs
+    LOG="/vagrant/logs/$2.log"
+    else
+    LOG="vault.log"
+    fi
+
+    IP=$(hostname -I | cut -f2 -d' ')
+
+    sudo useradd --system --home /etc/consul.d --shell /bin/false consul
+    sudo chown --recursive consul:consul /etc/consul.d
+    sudo chmod -R 755 /etc/consul.d/
+    sudo mkdir --parents /tmp/consul
+    sudo chown --recursive consul:consul /tmp/consul
+    mkdir -p /tmp/consul_logs/
+    sudo chown --recursive consul:consul /tmp/consul_logs/
+
+    cat << EOF > /etc/systemd/system/consul.service
+    [Unit]
+    Description="HashiCorp Consul - A service mesh solution"
+    Documentation=https://www.consul.io/
+    Requires=network-online.target
+    After=network-online.target
+
+    [Service]
+    User=consul
+    Group=consul
+    ExecStart=/usr/local/bin/consul agent -config-dir=/etc/consul.d/
+    ExecReload=/usr/local/bin/consul reload
+    KillMode=process
+    Restart=on-failure
+    LimitNOFILE=65536
+
+
+    [Install]
+    WantedBy=multi-user.target
 
 EOF
+}
 
-if [ ${TLS} = true ]; then
-    if [[ "${var2}" == "consul-server1-sofia" ]]; then
+create_gossip_conf () {
+    if [[ "$1" == "consul-server1-sofia" ]]; then
         encr=`consul keygen`
         cat << EOF > /etc/consul.d/encrypt.json
 
@@ -93,91 +95,120 @@ if [ ${TLS} = true ]; then
         }
 EOF
     fi
+}
+
+get_vault_certs () {
+    CERTS=`curl --cacert /etc/tls/vault.crt --header "X-Vault-Token: \`cat /vagrant/keys.txt | grep "Initial Root Token:" | cut -c21-\`"        --request POST        --data '{"common_name": "'server.$1.$2'", "alt_names": "localhost", "ip_sans": "127.0.0.1", "ttl": "24h"}'       https://10.10.46.11:8200/v1/pki_int/issue/example-dot-com`
+    if [ $? -ne 0 ];then
+    $echo 'There is no certificates received'
+    exit 1
+    fi
+    echo $CERTS | jq -r .data.issuing_ca > /etc/tls/consul-agent-ca.pem
+    echo $CERTS | jq -r .data.certificate > /etc/tls/consul-agent.pem
+    echo $CERTS | jq -r .data.private_key > /etc/tls/consul-agent-key.pem
+}
+
+create_tls_conf () {
+    cat << EOF > /etc/consul.d/tls.json
+
+    {
+        "verify_incoming_rpc": true,
+        "verify_incoming_https": false,
+        "verify_outgoing": true,
+        "verify_server_hostname": true,
+        "ca_file": "/etc/tls/consul-agent-ca.pem",
+        "cert_file": "/etc/tls/consul-agent.pem",
+        "key_file": "/etc/tls/consul-agent-key.pem",
+        "ports": {
+            "http": -1,
+            "https": 8501
+        }
+    }
+
+EOF
+}
+
+create_server_conf () {
+    cat << EOF > /etc/consul.d/config_${1}.json
+    
+    {
+        
+        "server": true,
+        "node_name": "${2}",
+        "bind_addr": "${3}",
+        "client_addr": "0.0.0.0",
+        "bootstrap_expect": ${4},
+        "retry_join": ${5},
+        "retry_join_wan": ${6},
+        "log_level": "${7}",
+        "data_dir": "/tmp/consul",
+        "enable_script_checks": true,
+        "domain": "${8}",
+        "datacenter": "${1}",
+        "ui": true,
+        "disable_remote_exec": true
+
+    }
+EOF
+}
+
+create_client_conf () {
+    cat << EOF > /etc/consul.d/consul_client.json
+
+        {
+            "node_name": "${1}",
+            "bind_addr": "${2}",
+            "client_addr": "0.0.0.0",
+            "retry_join": ${3},
+            "log_level": "${4}",
+            "data_dir": "/tmp/consul",
+            "enable_script_checks": true,
+            "domain": "${5}",
+            "datacenter": "${6}",
+            "ui": true,
+            "disable_remote_exec": true
+        }
+
+EOF
+}
+
+if [ ${TLS} = true ]; then
+    mkdir -p /etc/tls
+    sshpass -p 'vagrant' scp -o StrictHostKeyChecking=no vagrant@10.10.46.11:"/etc/vault.d/vault.crt" /etc/tls/
+     # Unsealing vault
+
+    unseal_vault
+fi
+
+# Starting consul
+
+init_consul ${LOG_LEVEL} ${var2} 
+
+if [ ${TLS} = true ]; then
+    create_gossip_conf $var2
 fi
 
 if [[ "${var2}" =~ "consul-server" ]]; then
     killall consul
     if [ ${TLS} = true ]; then
         sudo sshpass -p 'vagrant' scp -o StrictHostKeyChecking=no vagrant@10.10.56.11:"/etc/consul.d/encrypt.json" /etc/consul.d/
-        CERTS=`curl --cacert /etc/tls/vault.crt --header "X-Vault-Token: \`cat /vagrant/keys.txt | grep "Initial Root Token:" | cut -c21-\`"        --request POST        --data '{"common_name": "'server.${DCNAME}.${DOMAIN}'", "alt_names": "localhost", "ip_sans": "127.0.0.1", "ttl": "24h"}'       https://10.10.46.11:8200/v1/pki_int/issue/example-dot-com`
-        if [ $? -ne 0 ];then
-        $echo 'There is no certificates received'
-        exit 1
-        fi
-        echo $CERTS | jq -r .data.issuing_ca > /etc/tls/consul-agent-ca.pem
-        echo $CERTS | jq -r .data.certificate > /etc/tls/consul-agent.pem
-        echo $CERTS | jq -r .data.private_key > /etc/tls/consul-agent-key.pem
-        cat << EOF > /etc/consul.d/tls.json
+        get_vault_certs ${DCNAME} ${DOMAIN}
 
-        {
-            "verify_incoming_rpc": true,
-            "verify_incoming_https": false,
-            "verify_outgoing": true,
-            "verify_server_hostname": true,
-            "ca_file": "/etc/tls/consul-agent-ca.pem",
-            "cert_file": "/etc/tls/consul-agent.pem",
-            "key_file": "/etc/tls/consul-agent-key.pem",
-            "ports": {
-                "http": -1,
-                "https": 8501
-            }
-        }
-
-EOF
+        create_tls_conf
     fi
     
-    SERVER_COUNT=${SERVER_COUNT}
-    echo $SERVER_COUNT
+   
     if [[ "${var2}" =~ "sofia" ]]; then
 
-    cat << EOF > /etc/consul.d/config_${DCNAME}.json
-    
-    {
-        
-        "server": true,
-        "node_name": "${var2}",
-        "bind_addr": "${IP}",
-        "client_addr": "0.0.0.0",
-        "bootstrap_expect": ${SERVER_COUNT},
-        "retry_join": ["10.10.56.11"],
-        "retry_join_wan": ["10.20.56.11"],
-        "log_level": "${LOG_LEVEL}",
-        "data_dir": "/tmp/consul",
-        "enable_script_checks": true,
-        "domain": "${DOMAIN}",
-        "datacenter": "${DCNAME}",
-        "ui": true,
-        "disable_remote_exec": true
 
-    }
+    create_server_conf ${DCNAME} ${var2} ${IP} ${SERVER_COUNT} ${SOFIA_SERVERS} ${BTG_SERVERS} ${LOG_LEVEL} ${DOMAIN}
 
-EOF
+
     fi
 
     if [[ "${var2}" =~ "botevgrad" ]]; then
     
-    cat << EOF > /etc/consul.d/config_${DCNAME}.json
-    
-    {
-        
-        "server": true,
-        "node_name": "${var2}",
-        "bind_addr": "${IP}",
-        "client_addr": "0.0.0.0",
-        "bootstrap_expect": ${SERVER_COUNT},
-        "retry_join": ["10.20.56.11"],
-        "retry_join_wan": ["10.10.56.11"],
-        "log_level": "${LOG_LEVEL}",
-        "data_dir": "/tmp/consul",
-        "enable_script_checks": true,
-        "domain": "${DOMAIN}",
-        "datacenter": "${DCNAME}",
-        "ui": true,
-        "disable_remote_exec": true
-
-    }
-
-EOF
+    create_server_conf ${DCNAME} ${var2} ${IP} ${SERVER_COUNT} ${BTG_SERVERS} ${SOFIA_SERVERS} ${LOG_LEVEL} ${DOMAIN}
     fi
 
 
@@ -193,49 +224,11 @@ else
         killall consul
         if [ ${TLS} = true ]; then
             sudo sshpass -p 'vagrant' scp -o StrictHostKeyChecking=no vagrant@10.10.56.11:"/etc/consul.d/encrypt.json" /etc/consul.d/
-            CERTS=`curl --cacert /etc/tls/vault.crt --header "X-Vault-Token: \`cat /vagrant/keys.txt | grep "Initial Root Token:" | cut -c21-\`"        --request POST        --data '{"common_name": "'server.${DCNAME}.${DOMAIN}'", "alt_names": "localhost", "ip_sans": "127.0.0.1", "ttl": "24h"}'       https://10.10.46.11:8200/v1/pki_int/issue/example-dot-com`
-            if [ $? -ne 0 ];then
-            $echo 'There is no certificates received'
-            exit 1
-            fi
-            echo $CERTS | jq -r .data.issuing_ca > /etc/tls/consul-agent-ca.pem
-            echo $CERTS | jq -r .data.certificate > /etc/tls/consul-agent.pem
-            echo $CERTS | jq -r .data.private_key > /etc/tls/consul-agent-key.pem
-            cat << EOF > /etc/consul.d/tls.json
+            get_vault_certs ${DCNAME} ${DOMAIN}
 
-            {
-                "verify_incoming_rpc": true,
-                "verify_incoming_https": false,
-                "verify_outgoing": true,
-                "verify_server_hostname": true,
-                "ca_file": "/etc/tls/consul-agent-ca.pem",
-                "cert_file": "/etc/tls/consul-agent.pem",
-                "key_file": "/etc/tls/consul-agent-key.pem",
-                "ports": {
-                    "http": -1,
-                    "https": 8501
-                }
-            }
-
-EOF
+            create_tls_conf
         fi
-        cat << EOF > /etc/consul.d/consul_client.json
-
-        {
-            "node_name": "${var2}",
-            "bind_addr": "${IP}",
-            "client_addr": "0.0.0.0",
-            "retry_join": ["10.${DC}0.56.11"],
-            "log_level": "${LOG_LEVEL}",
-            "data_dir": "/tmp/consul",
-            "enable_script_checks": true,
-            "domain": "${DOMAIN}",
-            "datacenter": "${DCNAME}",
-            "ui": true,
-            "disable_remote_exec": true
-        }
-
-EOF
+        create_client_conf ${var2} ${IP} ${JOIN_SERVER} ${LOG_LEVEL} ${DOMAIN} ${DCNAME}
     fi
 
     sleep 1
