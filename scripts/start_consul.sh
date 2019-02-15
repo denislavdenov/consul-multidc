@@ -16,6 +16,7 @@ var2=$(hostname)
 mkdir -p /vagrant/logs
 mkdir -p /etc/consul.d
 
+# Function used for unsealing Vault
 unseal_vault () {
     curl \
         --request PUT \
@@ -36,7 +37,8 @@ unseal_vault () {
         https://10.10.46.11:8200/v1/sys/unseal
 }
 
-
+# Function used for initialize Consul. Requires 2 arguments: Log level and the hostname assigned by the respective variables.
+# If no log level is specified in the Vagrantfile, then default "info" is used.
 init_consul () {
     killall consul
 
@@ -85,6 +87,7 @@ init_consul () {
 EOF
 }
 
+# Function for creating the gossip encryption conf file. Requires 1 argument: the hostname . This function is always executed only once on the 1st server.
 create_gossip_conf () {
     if [[ "$1" == "consul-server1-sofia" ]]; then
         encr=`consul keygen`
@@ -96,7 +99,7 @@ create_gossip_conf () {
 EOF
     fi
 }
-
+# Function that requests certificates from Vault. It requires 2 arguments: Datacenter name - DCNAME and DOMAIN
 get_vault_certs () {
     CERTS=`curl --cacert /etc/tls/vault.crt --header "X-Vault-Token: \`cat /vagrant/keys.txt | grep "Initial Root Token:" | cut -c21-\`"        --request POST        --data '{"common_name": "'server.$1.$2'", "alt_names": "localhost", "ip_sans": "127.0.0.1", "ttl": "24h"}'       https://10.10.46.11:8200/v1/pki_int/issue/example-dot-com`
     if [ $? -ne 0 ];then
@@ -108,6 +111,7 @@ get_vault_certs () {
     echo $CERTS | jq -r .data.private_key > /etc/tls/consul-agent-key.pem
 }
 
+# Function that creates the TLS encryption conf file if TLS is enabled in Vagrantfile
 create_tls_conf () {
     cat << EOF > /etc/consul.d/tls.json
 
@@ -128,6 +132,8 @@ create_tls_conf () {
 EOF
 }
 
+# Function that creates the conf file for the Consul servers. It requires 8 arguments. All of them are defined in the beginning of the script.
+# Arguments 5 and 6 are the SOFIA_SERVERS and BTG_SERVERS and they are twisted depending in which DC you are creating the conf file.
 create_server_conf () {
     cat << EOF > /etc/consul.d/config_${1}.json
     
@@ -152,6 +158,8 @@ create_server_conf () {
 EOF
 }
 
+# Function that creates the conf file for Consul clients. It requires 6 arguments and they are defined in the beginning of the script.
+# 3rd argument shall be the JOIN_SERVER as it points the client to which server contact for cluster join.
 create_client_conf () {
     cat << EOF > /etc/consul.d/consul_client.json
 
