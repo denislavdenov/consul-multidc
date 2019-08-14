@@ -8,7 +8,7 @@ SERVER_COUNT=${SERVER_COUNT}
 DCNAME=${DCS}
 DC=${DC}
 TLS=${TLS}
-SOFIA_SERVERS="[\"10.10.56.11\"]"
+SOFIA_SERVERS="[\"10.10.56.11\",\"10.10.56.12\",\"10.10.56.13\"]"
 BTG_SERVERS="[\"10.20.56.11\"]"
 JOIN_SERVER="[\"10.${DC}0.56.11\"]"
 echo ${TLS}
@@ -125,7 +125,7 @@ create_tls_conf () {
         "key_file": "/etc/tls/consul-agent-key.pem",
         "ports": {
             "http": -1,
-            "https": 8501
+            "https": 8551
         }
     }
 
@@ -152,7 +152,16 @@ create_server_conf () {
         "domain": "${8}",
         "datacenter": "${1}",
         "ui": true,
-        "disable_remote_exec": true
+        "disable_remote_exec": true,
+        "autopilot": {
+          "cleanup_dead_servers": false,
+          "last_contact_threshold": "300ms",
+          "max_trailing_logs": 250,
+          "server_stabilization_time": "10s",
+          "redundancy_zone_tag": "",
+          "disable_upgrade_migration": false,
+          "upgrade_version_tag": ""
+        }
 
     }
 EOF
@@ -174,7 +183,17 @@ create_client_conf () {
             "domain": "${5}",
             "datacenter": "${6}",
             "ui": true,
-            "disable_remote_exec": true
+            "disable_remote_exec": true,
+            "leave_on_terminate": false,
+            "autopilot": {
+              "cleanup_dead_servers": false,
+              "last_contact_threshold": "300ms",
+              "max_trailing_logs": 250,
+              "server_stabilization_time": "10s",
+              "redundancy_zone_tag": "",
+              "disable_upgrade_migration": false,
+              "upgrade_version_tag": ""
+            }
         }
 
 EOF
