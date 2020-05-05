@@ -1,0 +1,7 @@
+AccessorID:       12a602f3-6ca0-c732-dd90-16a68474cb63
+SecretID:         2b88334a-d1a1-1ad9-260d-e1beef0a2f41
+Description:      Agent Token
+Local:            false
+Create Time:      2020-05-05 11:07:26.294622873 +0000 UTC
+Policies:
+   23df2c1e-048c-5e15-323a-e05b80edefe1 - agent-token

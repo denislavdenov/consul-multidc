@@ -1,0 +1,7 @@
+AccessorID:       97d19f16-8fd7-d4ee-2421-bf4ba03a8df0
+SecretID:         bbb39792-cd3e-83fd-9ae0-9582ab163728
+Description:      KV Token
+Local:            false
+Create Time:      2020-05-05 11:07:26.345420893 +0000 UTC
+Policies:
+   77bf9e23-d967-5d8b-a258-350aef86bef3 - kv-token

@@ -1,0 +1,7 @@
+AccessorID:       42cd3dd0-17dd-d76e-f44a-d2750dd2a0cb
+SecretID:         efc6b576-4328-a67e-e36f-5362b352e62c
+Description:      Snapshot Token
+Local:            false
+Create Time:      2020-05-05 11:07:26.39213588 +0000 UTC
+Policies:
+   4128c85a-87ec-59ac-7beb-51043c838f6b - snapshot-token

@@ -8,15 +8,58 @@ SERVER_COUNT=${SERVER_COUNT}
 DCNAME=${DCS}
 DC=${DC}
 TLS=${TLS}
-SOFIA_SERVERS="[\"10.10.56.11\",\"10.10.56.12\",\"10.10.56.13\"]"
+SOFIA_SERVERS="[\"10.10.56.11\"]"
 BTG_SERVERS="[\"10.20.56.11\"]"
 JOIN_SERVER="[\"10.${DC}0.56.11\"]"
 echo ${TLS}
 var2=$(hostname)
 mkdir -p /vagrant/logs
 mkdir -p /etc/consul.d
+rm -fr /tmp/consul
 
 # Function used for unsealing Vault
+acl_boostrap () {
+    cat << EOF > /etc/consul.d/acl.json
+    {
+        "acl": {
+            "enabled": true,
+            "default_policy": "deny",
+            "down_policy": "extend-cache"
+        }
+    }
+EOF
+
+    systemctl restart consul.service
+    sleep 15
+    consul acl bootstrap > /vagrant/keys/master.txt -ca-file=/etc/tls/consul-agent-ca.pem -client-cert=/etc/tls/consul-agent.pem -client-key=/etc/tls/consul-agent-key.pem -http-addr="https://127.0.0.1:8501"
+    export CONSUL_HTTP_TOKEN=`cat /vagrant/keys/master.txt | grep "SecretID:" | cut -c19-`
+    consul members
+    consul acl policy create  -name "agent-token" -description "Agent Token Policy" -rules @/vagrant/policy/agent-policy.hcl -ca-file=/etc/tls/consul-agent-ca.pem -client-cert=/etc/tls/consul-agent.pem -client-key=/etc/tls/consul-agent-key.pem -http-addr="https://127.0.0.1:8501"
+    consul acl policy create  -name "kv-token" -description "KV token policy" -rules @/vagrant/policy/kv.hcl -ca-file=/etc/tls/consul-agent-ca.pem -client-cert=/etc/tls/consul-agent.pem -client-key=/etc/tls/consul-agent-key.pem -http-addr="https://127.0.0.1:8501"
+    consul acl policy create  -name "snapshot-token" -description "Snapshot token policy" -rules @/vagrant/policy/snapshot.hcl -ca-file=/etc/tls/consul-agent-ca.pem -client-cert=/etc/tls/consul-agent.pem -client-key=/etc/tls/consul-agent-key.pem -http-addr="https://127.0.0.1:8501"
+    consul acl token create -description "Agent Token" -policy-name "agent-token" > /vagrant/keys/agent.txt -ca-file=/etc/tls/consul-agent-ca.pem -client-cert=/etc/tls/consul-agent.pem -client-key=/etc/tls/consul-agent-key.pem -http-addr="https://127.0.0.1:8501"
+    consul acl token create -description "KV Token" -policy-name "kv-token" > /vagrant/keys/kv.txt -ca-file=/etc/tls/consul-agent-ca.pem -client-cert=/etc/tls/consul-agent.pem -client-key=/etc/tls/consul-agent-key.pem -http-addr="https://127.0.0.1:8501"
+    consul acl token create -description "Snapshot Token" -policy-name "snapshot-token" > /vagrant/keys/snapshot.txt -ca-file=/etc/tls/consul-agent-ca.pem -client-cert=/etc/tls/consul-agent.pem -client-key=/etc/tls/consul-agent-key.pem -http-addr="https://127.0.0.1:8501"
+
+}
+
+change_acl_conf () {
+    cat << EOF > /etc/consul.d/acl.json
+    {
+        "primary_datacenter": "sofia",
+        "acl": {
+            "enabled": true,
+            "default_policy": "deny",
+            "down_policy": "extend-cache",
+            "tokens": {
+                "default": "${AGENT_TOKEN}",
+                "replication": "${SNAPSHOT_TOKEN}"
+            }
+        }
+    }
+EOF
+}
+
 unseal_vault () {
     curl \
         --request PUT \
@@ -125,7 +168,7 @@ create_tls_conf () {
         "key_file": "/etc/tls/consul-agent-key.pem",
         "ports": {
             "http": -1,
-            "https": 8551
+            "https": 8501
         }
     }
 
@@ -135,6 +178,29 @@ EOF
 # Function that creates the conf file for the Consul servers. It requires 8 arguments. All of them are defined in the beginning of the script.
 # Arguments 5 and 6 are the SOFIA_SERVERS and BTG_SERVERS and they are twisted depending in which DC you are creating the conf file.
 create_server_conf () {
+    if [[ ${2} =~ "server1-sofia" ]]; then
+    cat << EOF > /etc/consul.d/config_${1}.json
+    
+    {
+        
+        "server": true,
+        "node_name": "${2}",
+        "bind_addr": "${3}",
+        "client_addr": "0.0.0.0",
+        "bootstrap_expect": 1,
+        "retry_join": ${5},
+        "retry_join_wan": ${6},
+        "log_level": "${7}",
+        "data_dir": "/tmp/consul",
+        "enable_script_checks": true,
+        "domain": "${8}",
+        "datacenter": "${1}",
+        "ui": true,
+        "disable_remote_exec": true
+
+    }
+EOF
+    else
     cat << EOF > /etc/consul.d/config_${1}.json
     
     {
@@ -152,19 +218,12 @@ create_server_conf () {
         "domain": "${8}",
         "datacenter": "${1}",
         "ui": true,
-        "disable_remote_exec": true,
-        "autopilot": {
-          "cleanup_dead_servers": false,
-          "last_contact_threshold": "300ms",
-          "max_trailing_logs": 250,
-          "server_stabilization_time": "10s",
-          "redundancy_zone_tag": "",
-          "disable_upgrade_migration": false,
-          "upgrade_version_tag": ""
-        }
+        "disable_remote_exec": true
 
     }
 EOF
+    fi
+
 }
 
 # Function that creates the conf file for Consul clients. It requires 6 arguments and they are defined in the beginning of the script.
@@ -183,17 +242,7 @@ create_client_conf () {
             "domain": "${5}",
             "datacenter": "${6}",
             "ui": true,
-            "disable_remote_exec": true,
-            "leave_on_terminate": false,
-            "autopilot": {
-              "cleanup_dead_servers": false,
-              "last_contact_threshold": "300ms",
-              "max_trailing_logs": 250,
-              "server_stabilization_time": "10s",
-              "redundancy_zone_tag": "",
-              "disable_upgrade_migration": false,
-              "upgrade_version_tag": ""
-            }
+            "disable_remote_exec": true
         }
 
 EOF
@@ -243,8 +292,20 @@ if [[ "${var2}" =~ "consul-server" ]]; then
     sudo systemctl enable consul
     sudo systemctl start consul
     journalctl -f -u consul.service > /vagrant/logs/${var2}.log &
-    sleep 5
+    sleep 15
     sudo systemctl status consul
+
+    if [[ "${var2}" =~ "server1-sofia" ]]; then
+
+    acl_boostrap
+
+    fi
+    export AGENT_TOKEN=`cat /vagrant/keys/agent.txt | grep "SecretID:" | cut -c19-`
+    export SNAPSHOT_TOKEN=`cat /vagrant/keys/snapshot.txt | grep "SecretID:" | cut -c19-`
+    change_acl_conf
+    systemctl restart consul
+    sleep 15
+    export CONSUL_HTTP_TOKEN=`cat /vagrant/keys/master.txt | grep "SecretID:" | cut -c19-`
 
 else
     if [[ "${var2}" =~ "client" ]]; then
@@ -259,22 +320,24 @@ else
     fi
 
     sleep 1
-
+    export AGENT_TOKEN=`cat /vagrant/keys/agent.txt | grep "SecretID:" | cut -c19-`
+    export SNAPSHOT_TOKEN=`cat /vagrant/keys/snapshot.txt | grep "SecretID:" | cut -c19-`
+    change_acl_conf
     sudo systemctl enable consul
     sudo systemctl start consul
     journalctl -f -u consul.service > /vagrant/logs/${var2}.log &
-    sleep 5
+    sleep 15
     sudo systemctl status consul
     
 fi
-
+ export CONSUL_HTTP_TOKEN=`cat /vagrant/keys/master.txt | grep "SecretID:" | cut -c19-`
 
 sleep 5
 if [ ${TLS} = true ]; then
     consul members -ca-file=/etc/tls/consul-agent-ca.pem -client-cert=/etc/tls/consul-agent.pem -client-key=/etc/tls/consul-agent-key.pem -http-addr="https://127.0.0.1:8501"
     consul members -wan -ca-file=/etc/tls/consul-agent-ca.pem -client-cert=/etc/tls/consul-agent.pem -client-key=/etc/tls/consul-agent-key.pem -http-addr="https://127.0.0.1:8501"
     curl --cacert /etc/tls/vault.crt --header "X-Vault-Token: `cat /vagrant/keys.txt | grep \"Initial Root Token:\" | cut -c21-`" --request PUT https://10.10.46.11:8200/v1/sys/seal
-
+    sleep 1
 else
     consul members
     consul members -wan

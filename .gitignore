@@ -2,3 +2,5 @@
 pkg/
 logs/
 keys.txt
+.DS_Store
+valid-consul-license.hclic

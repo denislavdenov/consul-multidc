@@ -3,6 +3,7 @@
 set -x
 n=${I}
 TLS=${TLS}
+export CONSUL_HTTP_TOKEN=`cat /vagrant/keys/master.txt | grep "SecretID:" | cut -c19-`
 
 
 ########################
@@ -17,6 +18,7 @@ if [ ${TLS} = true ]; then
         curl \
             --request PUT \
             --cacert /etc/tls/consul-agent-ca.pem \
+            -H "X-Consul-Token: $CONSUL_HTTP_TOKEN" \
             --data '
         <!DOCTYPE html>
         <html>
@@ -42,6 +44,7 @@ if [ ${TLS} = true ]; then
             curl \
                 --request PUT \
                 --cacert /etc/tls/consul-agent-ca.pem \
+                -H "X-Consul-Token: $CONSUL_HTTP_TOKEN" \
                 --data '
         <!DOCTYPE html>
         <html>

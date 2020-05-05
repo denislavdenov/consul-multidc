@@ -3,10 +3,10 @@
 TLS=${TLS}
 # Check for nginx
 which nginx || {
-apt-get update -y
-apt-get install nginx -y
+    apt-get update -y
+    apt-get install nginx -y
 }
-
+export CONSUL_TOKEN=`cat /vagrant/keys/master.txt | grep "SecretID:" | cut -c19-`
 export HN=$(hostname)
 var2=$(hostname)
 # Create script check
@@ -24,7 +24,7 @@ cat << EOF > /etc/consul.d/web.json
 {
     "service": {
         "name": "web",
-        "tags": ["${var2}"],
+        "tags": ["webpage"],
         "port": 80
     },
     "checks": [
@@ -65,7 +65,7 @@ fi
 
 sleep 1
 if [ ${TLS} = true ]; then
-    consul reload -ca-file=/etc/tls/consul-agent-ca.pem -client-cert=/etc/tls/consul-agent.pem -client-key=/etc/tls/consul-agent-key.pem -http-addr="https://127.0.0.1:8501"
+    consul reload -ca-file=/etc/tls/consul-agent-ca.pem -client-cert=/etc/tls/consul-agent.pem -client-key=/etc/tls/consul-agent-key.pem -http-addr="https://127.0.0.1:8501" -token $CONSUL_TOKEN
 else
     consul reload
 fi
